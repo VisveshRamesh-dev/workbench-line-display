@@ -1,0 +1,20 @@
+{
+  "code_pattern": "P(\\d{5})",
+  "idle_timeout_seconds": 0,
+  "completion_min_gap_ms": 3000,
+  "completion_flash_ms": 1800,
+  "server_port": 8080,
+  "serial_port": "COM11",
+  "serial_mode": "baud=9600 parity=N data=8 stop=1",
+  "serial_mirror_port": "",
+  "serial_debug": false,
+  "stations": [
+    { "id": "WB-01", "name": "Door Trim Assembly" }
+  ],
+  "parts": {
+    "82301": { "image": "assets/MQ4I-FRONT-DOOR-TRIM.png", "description": "82301GB000MQC · MQ4I Front Door Trim — FL (Front Left) · Process 07" },
+    "82302": { "image": "assets/MQ4I-FRONT-DOOR-TRIM.png", "description": "82302GB000MQC · MQ4I Front Door Trim — FR (Front Right) · Process 07" },
+    "83301": { "image": "assets/MQ4I-REAR-DOOR-TRIM.png", "description": "83301GB000MQC · MQ4I Rear Door Trim — RL (Rear Left) · Process 07" },
+    "83302": { "image": "assets/MQ4I-REAR-DOOR-TRIM.png", "description": "83302GB000MQC · MQ4I Rear Door Trim — RR (Rear Right) · Process 07" }
+  }
+}
