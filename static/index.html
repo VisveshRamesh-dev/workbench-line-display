@@ -2,32 +2,44 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Workbench Display Controller</title>
+  <title>Workbench Line Display</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body class="page-index">
   <div class="index-wrap">
-    <h1>Workbench Display Controller</h1>
-    <p class="tagline">Central controller for the door garnish assembly line</p>
+    <h1>Workbench Line Display</h1>
+    <p class="tagline">Multi-monitor pipeline — one scan advances every bench down the line</p>
 
+    <h2 class="index-section">Bench monitors</h2>
+    <div class="index-grid" id="displayGrid"></div>
+
+    <h2 class="index-section">Controls</h2>
     <div class="index-grid">
-      <a class="index-card" href="/station/WB-01">
-        <h2>Station Display</h2>
-        <p>Open the operator display (runs full-screen on the secondary monitor in production).</p>
-      </a>
       <a class="index-card" href="/supervisor">
         <h2>Supervisor View</h2>
-        <p>Live status of the station at a glance.</p>
+        <p>Live view of every position in the line, with a reset.</p>
       </a>
       <a class="index-card" href="/simulator">
         <h2>Scanner Simulator</h2>
-        <p>Test scans against the station without hardware.</p>
-      </a>
-      <a class="index-card" href="/static/barcodes.html" target="_blank">
-        <h2>QR Samples</h2>
-        <p>Printable / on-screen QR codes for every configured part, plus the error samples — scan them into the station display.</p>
+        <p>Send mock scans to test the pipeline without a scanner.</p>
       </a>
     </div>
   </div>
+
+  <script>
+    fetch('/api/config').then(r => r.json()).then(cfg => {
+      const grid = document.getElementById('displayGrid');
+      (cfg.displays || []).forEach((d, i) => {
+        const a = document.createElement('a');
+        a.className = 'index-card';
+        a.href = '/display/' + encodeURIComponent(d.id);
+        a.target = '_blank';
+        a.innerHTML = `<h2>${d.name}</h2><p>Full-screen on bench ${i + 1}'s monitor. ${i === 0 ? 'Entry bench — the scanner lives here.' : 'Shows its step as products arrive.'}</p><p class="index-id">${d.id}</p>`;
+        grid.appendChild(a);
+      });
+    }).catch(() => {
+      document.getElementById('displayGrid').innerHTML = '<p class="tagline">Could not load monitors.</p>';
+    });
+  </script>
 </body>
 </html>

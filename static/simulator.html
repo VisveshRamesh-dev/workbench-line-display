@@ -9,20 +9,31 @@
   <div class="sim-wrap">
     <header class="sim-header">
       <h1>Scanner Simulator</h1>
-      <p>Send mock scans to any workbench. Use this to test the display flow without physical scanners.</p>
+      <p>One entry scanner feeds the line. Each scan pushes that product onto bench 1 (step 1) and shifts the others one bench forward. Scan several in a row to watch the pipeline fill.</p>
     </header>
 
     <div class="sim-quick">
-      <span class="sim-label">Quick scans:</span>
-      <button data-code="[)>06VTEIHP82301GB000MQCSB00QT2609100101AB9AXG0148C:M:">82301 · Front trim</button>
-      <button data-code="[)>06VTEIHP82302GB000MQCSB00QT2609100101AB9AXG0149C:M:">82302 · Front trim</button>
-      <button data-code="[)>06VTEIHP83301GB000MQCSB00QT2609100101AB9AXG0147C:M:">83301 · Rear trim</button>
-      <button data-code="[)>06VTEIHP83302GB000MQCSB00QT2609100101AB9AXG0146C:M:">83302 · Rear trim</button>
-      <button data-code="[)>06VTEIHP99999ZZ000MQCSB00QT2609100101AB9AXG9999C:M:" class="danger">Unknown</button>
-      <button data-code="random junk" class="danger">Garbage</button>
+      <span class="sim-label">Scan a part:</span>
+      <span id="partButtons"></span>
+      <button data-raw="P99999" class="danger">Unknown</button>
+      <button data-raw="random junk" class="danger">Garbage</button>
     </div>
 
-    <div class="sim-grid" id="simGrid"></div>
+    <div class="sim-card">
+      <div class="sim-input-row">
+        <input type="text" id="rawInput" placeholder="raw scan text (e.g. P82301)" />
+        <button id="sendBtn">Send scan</button>
+      </div>
+      <div class="sim-actions" id="displayLinks"></div>
+    </div>
+
+    <div class="sim-line">
+      <div class="sim-line-head">
+        <span>LINE</span>
+        <button id="resetBtn" class="reset-btn">Reset line</button>
+      </div>
+      <div id="simLineBody" class="sim-line-body">Line empty.</div>
+    </div>
 
     <div class="sim-console">
       <h3>Recent activity</h3>
@@ -31,89 +42,64 @@
   </div>
 
   <script>
-    let stations = [];
-    let selectedCode = '[)>06VTEIHP82302GB000MQCSB00QT2609100101AB9AXG0149C:M:';
-
     async function init() {
-      const res = await fetch('/api/config');
-      const cfg = await res.json();
-      stations = cfg.stations;
-      renderStations();
+      const cfg = await (await fetch('/api/config')).json();
+      const pb = document.getElementById('partButtons');
+      (cfg.parts || []).forEach(p => {
+        const b = document.createElement('button');
+        b.dataset.raw = 'P' + p.code;
+        b.textContent = `P${p.code} (${p.steps} steps)`;
+        pb.appendChild(b);
+      });
+      const links = document.getElementById('displayLinks');
+      (cfg.displays || []).forEach(d => {
+        const a = document.createElement('a');
+        a.className = 'sim-link'; a.href = '/display/' + encodeURIComponent(d.id); a.target = '_blank';
+        a.textContent = `Open ${d.id} →`;
+        links.appendChild(a);
+      });
+      document.querySelectorAll('.sim-quick button, #partButtons button').forEach(btn => {
+        btn.addEventListener('click', () => sendScan(btn.dataset.raw));
+      });
+      document.getElementById('sendBtn').addEventListener('click', () => {
+        const v = document.getElementById('rawInput').value.trim();
+        if (v) sendScan(v); document.getElementById('rawInput').value = '';
+      });
+      document.getElementById('rawInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('sendBtn').click(); });
+      document.getElementById('resetBtn').addEventListener('click', async () => {
+        await fetch('/api/reset', { method: 'POST' }); logEntry('↺ line reset', 'ok');
+      });
+      refresh(); setInterval(refresh, 700);
     }
 
-    function renderStations() {
-      const grid = document.getElementById('simGrid');
-      grid.innerHTML = '';
-      stations.forEach(st => {
-        const card = document.createElement('div');
-        card.className = 'sim-card';
-        card.innerHTML = `
-          <h3>${st.name}</h3>
-          <div class="sim-id">${st.id}</div>
-          <div class="sim-input-row">
-            <input type="text" data-station="${st.id}" placeholder="raw scan text (default: P87310GB000ABP)" />
-            <button data-send="${st.id}">Send</button>
-          </div>
-          <div class="sim-actions">
-            <a href="/station/${st.id}" target="_blank" class="sim-link">Open display →</a>
-          </div>
-        `;
-        grid.appendChild(card);
-      });
-
-      grid.querySelectorAll('button[data-send]').forEach(btn => {
-        btn.addEventListener('click', () => sendScan(btn.dataset.send));
-      });
-      grid.querySelectorAll('input[data-station]').forEach(inp => {
-        inp.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') sendScan(inp.dataset.station);
-        });
-      });
-    }
-
-    document.querySelectorAll('.sim-quick button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        selectedCode = btn.dataset.code;
-        document.querySelectorAll('.sim-quick button').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        // populate empty inputs with the selected code
-        document.querySelectorAll('input[data-station]').forEach(inp => {
-          if (!inp.value) inp.placeholder = 'will send: ' + selectedCode;
-        });
-      });
-    });
-
-    async function sendScan(stationId) {
-      const input = document.querySelector(`input[data-station="${stationId}"]`);
-      const raw = (input.value || selectedCode).trim();
-      logEntry(`→ ${stationId}: "${raw}"`);
-
+    async function sendScan(raw) {
+      logEntry(`→ "${raw}"`);
       try {
-        const res = await fetch('/api/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ raw, station_id: stationId }),
-        });
-        const data = await res.json();
-        if (data.ok) {
-          logEntry(`  ✓ ${stationId} → ${data.outcome} (${data.part_code})`, 'ok');
-        } else {
-          logEntry(`  ✗ ${stationId} → ${data.error}`, 'err');
-        }
-      } catch (err) {
-        logEntry(`  ✗ ${stationId} → network error`, 'err');
-      }
-      input.value = '';
+        const data = await (await fetch('/api/scan', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw })
+        })).json();
+        if (data.ok) logEntry(`  ✓ ${data.outcome} — ${data.part_code} (${data.total_steps} steps)`, 'ok');
+        else logEntry(`  ✗ ${data.error}`, 'err');
+      } catch (e) { logEntry('  ✗ network error', 'err'); }
+    }
+
+    async function refresh() {
+      try {
+        const snap = await (await fetch('/api/snapshots')).json();
+        const pos = snap.positions || [];
+        const parts = pos.map(p => p.state === 'display'
+          ? `${p.display_id}: ${p.part_code} step ${p.step_index}/${p.total_steps}`
+          : `${p.display_id}: —`);
+        document.getElementById('simLineBody').textContent = parts.join('   |   ') || 'Line empty.';
+      } catch (e) {}
     }
 
     function logEntry(msg, cls) {
       const log = document.getElementById('log');
       const line = document.createElement('div');
       line.className = 'log-line ' + (cls || '');
-      const ts = new Date().toLocaleTimeString();
-      line.textContent = `[${ts}] ${msg}`;
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
       log.prepend(line);
-      // keep last 30 lines
       while (log.children.length > 30) log.removeChild(log.lastChild);
     }
 

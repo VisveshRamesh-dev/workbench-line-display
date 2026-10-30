@@ -307,3 +307,42 @@ body:not([class]) { overflow: hidden; user-select: none; cursor: none; }
   color: #7ea0d6; font-size: 13px; font-family: 'Courier New', monospace;
   min-height: 18px;
 }
+
+/* ==========================================
+   Pipeline additions (multi-monitor)
+   ========================================== */
+.idle-name { font-size: 22px; color: #9fb6d6; margin-bottom: 26px; letter-spacing: 1px; }
+.step-badge {
+  font-size: 15px; font-weight: 700; letter-spacing: 2px;
+  background: #10345f; color: #a0c8f5; padding: 6px 14px; border-radius: 6px;
+}
+
+/* supervisor: line banner + position cards + reset */
+.line-banner {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 20px; padding: 16px 22px; border-radius: 12px;
+  border: 2px solid #2c4166; background: #1a2842; margin-bottom: 22px;
+}
+.line-banner.running { border-color: #1f6bcc; background: #16305a; }
+.line-state { font-size: 13px; font-weight: 800; letter-spacing: 2px; padding: 5px 12px; border-radius: 999px; background: rgba(126,160,214,0.2); color: #9fb6d6; }
+.line-banner.running .line-state { background: rgba(31,107,204,0.5); color: #cfe2ff; }
+.line-count { color: #9fb6d6; font-size: 14px; font-family: 'Courier New', monospace; }
+.reset-btn { padding: 9px 16px; border-radius: 8px; border: 1px solid #6d3a3a; background: #3a1e1e; color: #ffb0b0; font-weight: 600; cursor: pointer; }
+.reset-btn:hover { background: #5a2a2a; border-color: #a05050; }
+.pos-arrow { color: #5f6b85; font-size: 22px; align-self: center; }
+.super-card.display .super-step { color: #a0c8f5; font-family: 'Courier New', monospace; font-size: 13px; }
+
+/* index + simulator pipeline extras */
+.index-section { font-size: 15px; color: #8a9bb5; margin: 24px 0 12px; letter-spacing: 1px; text-transform: uppercase; }
+.index-id { font-family: 'Courier New', monospace; color: #7ea0d6; font-size: 12px; margin-top: 8px; letter-spacing: 2px; }
+#partButtons { display: inline-flex; flex-wrap: wrap; gap: 10px; }
+#partButtons button {
+  padding: 8px 14px; border: 1px solid #3a4c68; background: #223256; color: #e8eef5;
+  border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; cursor: pointer;
+}
+#partButtons button:hover { background: #2c4166; border-color: #4a76b8; }
+.sim-actions { gap: 16px; }
+.sim-line { padding: 18px 20px; background: #0f1f38; border: 1px solid #2c4166; border-radius: 10px; margin: 24px 0; }
+.sim-line-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.sim-line-head span { font-size: 13px; font-weight: 800; letter-spacing: 2px; color: #9fb6d6; }
+.sim-line-body { font-family: 'Courier New', monospace; font-size: 15px; color: #cfe2ff; }

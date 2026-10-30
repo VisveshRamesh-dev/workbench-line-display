@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Workbench Line Display</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- IDLE: no product at this bench yet -->
+  <section id="screen-idle" class="screen active">
+    <div class="idle-inner">
+      <div class="station-badge">BENCH <span id="benchId">--</span></div>
+      <div class="idle-name" id="benchName">--</div>
+      <div class="idle-icon">
+        <svg width="160" height="160" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="14" rx="1" />
+          <line x1="7" y1="7" x2="7" y2="15" /><line x1="10" y1="7" x2="10" y2="15" />
+          <line x1="13" y1="7" x2="13" y2="15" /><line x1="16" y1="7" x2="16" y2="15" /><line x1="19" y1="7" x2="19" y2="15" />
+        </svg>
+      </div>
+      <h1>Waiting for Product</h1>
+      <p class="subtitle">This step appears when a product reaches this bench.</p>
+      <div class="pulse-dot"></div>
+    </div>
+  </section>
+
+  <!-- DISPLAY: the step for the product now at this bench -->
+  <section id="screen-display" class="screen">
+    <div class="display-header">
+      <span class="part-code" id="partCode">--</span>
+      <span class="part-desc" id="partDesc">--</span>
+      <span class="step-badge" id="stepBadge">STEP –/–</span>
+      <span class="station-tag">Bench <span id="benchTagId">--</span></span>
+    </div>
+    <div class="image-wrap">
+      <img id="specImage" src="" alt="Step" />
+    </div>
+    <div class="footer-hint">Scan the next product to advance the line</div>
+  </section>
+
+  <!-- ERROR: transient flash for a bad scan (entry bench) -->
+  <section id="screen-error" class="screen">
+    <div class="error-inner">
+      <div class="error-icon">!</div>
+      <h1 id="errorTitle">Scan Problem</h1>
+      <p class="error-detail" id="errorDetail">--</p>
+      <p class="error-hint">Verify the part or contact your line supervisor.</p>
+    </div>
+  </section>
+
+  <script>
+    const parts = window.location.pathname.split('/');
+    const displayId = parts[parts.length - 1];
+    document.getElementById('benchId').textContent = displayId;
+    document.getElementById('benchTagId').textContent = displayId;
+
+    fetch('/api/config').then(r => r.json()).then(cfg => {
+      const d = (cfg.displays || []).find(x => x.id === displayId);
+      if (d) document.getElementById('benchName').textContent = d.name;
+    }).catch(() => {});
+
+    let errorTimer = null;
+    let lastState = null;
+
+    function showScreen(name) {
+      document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+      document.getElementById('screen-' + name).classList.add('active');
+    }
+
+    function playErrorBeep() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [0, 0.25, 0.5].forEach(delay => {
+          const osc = ctx.createOscillator(); const gain = ctx.createGain();
+          osc.type = 'square'; osc.frequency.value = 880;
+          gain.gain.setValueAtTime(0.15, ctx.currentTime + delay);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.15);
+          osc.connect(gain).connect(ctx.destination);
+          osc.start(ctx.currentTime + delay); osc.stop(ctx.currentTime + delay + 0.15);
+        });
+      } catch (e) {}
+    }
+
+    function renderState(ev) {
+      if (ev.state === 'idle') { showScreen('idle'); return; }
+      document.getElementById('partCode').textContent = ev.part_code || '';
+      document.getElementById('partDesc').textContent = ev.description || ev.part_name || '';
+      document.getElementById('stepBadge').textContent =
+        (ev.step_index && ev.total_steps) ? `STEP ${ev.step_index}/${ev.total_steps}` : '';
+      if (ev.image) document.getElementById('specImage').src = '/' + ev.image + '?t=' + Date.now();
+      showScreen('display');
+    }
+
+    function handleEvent(ev) {
+      if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
+      if (ev.type === 'error') {
+        document.getElementById('errorTitle').textContent = 'Scan Problem';
+        document.getElementById('errorDetail').textContent =
+          ev.message || (ev.part_code ? `Code "${ev.part_code}" is not configured.` : 'Scan could not be read.');
+        showScreen('error');
+        playErrorBeep();
+        errorTimer = setTimeout(() => { if (lastState) renderState(lastState); else showScreen('idle'); }, 3000);
+        return;
+      }
+      if (ev.type === 'state') { lastState = ev; renderState(ev); }
+    }
+
+    function connect() {
+      const src = new EventSource('/events/' + encodeURIComponent(displayId));
+      src.onmessage = (e) => { try { handleEvent(JSON.parse(e.data)); } catch (err) {} };
+      src.onerror = () => { /* EventSource retries automatically */ };
+    }
+    connect();
+  </script>
+</body>
+</html>

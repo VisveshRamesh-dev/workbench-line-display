@@ -15,221 +15,223 @@ import (
 
 // ---------- config types ----------
 
-type PartSpec struct {
+// Step is one instruction panel shown on one monitor. A part's procedure is an
+// ordered list of these; monitor i shows the product's step (i+1).
+type Step struct {
 	Image       string `json:"image"`
 	Description string `json:"description"`
 }
 
-type StationConfig struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Prefix string `json:"prefix"`
+type PartSpec struct {
+	Name  string `json:"name"`
+	Steps []Step `json:"steps"`
+}
+
+// DisplayConfig is one monitor / bench position in the line. The NUMBER of
+// entries here is the number of screens — fully configurable.
+type DisplayConfig struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type Config struct {
-	CodePattern         string              `json:"code_pattern"`
-	IdleTimeoutSeconds  int                 `json:"idle_timeout_seconds"`
-	CompletionMinGapMs  int                 `json:"completion_min_gap_ms"`
-	CompletionFlashMs   int                 `json:"completion_flash_ms"`
-	ServerPort          int                 `json:"server_port"`
-	Stations            []StationConfig     `json:"stations"`
-	Parts               map[string]PartSpec `json:"parts"`
+	CodePattern string              `json:"code_pattern"`
+	ServerPort  int                 `json:"server_port"`
+	Displays    []DisplayConfig     `json:"displays"`
+	Parts       map[string]PartSpec `json:"parts"`
 }
 
-// ---------- station state machine ----------
+// ---------- events ----------
 
-type StationState string
-
-const (
-	StateIdle      StationState = "idle"
-	StateDisplay   StationState = "display"
-	StateComplete  StationState = "complete"
-)
-
-// Event is what we push to browsers over SSE.
 type Event struct {
-	Type        string    `json:"type"`        // "state", "error"
+	Type        string    `json:"type"` // "state" | "error"
 	State       string    `json:"state,omitempty"`
 	PartCode    string    `json:"part_code,omitempty"`
+	PartName    string    `json:"part_name,omitempty"`
 	Image       string    `json:"image,omitempty"`
 	Description string    `json:"description,omitempty"`
+	StepIndex   int       `json:"step_index,omitempty"`  // 1-based
+	TotalSteps  int       `json:"total_steps,omitempty"`
 	Message     string    `json:"message,omitempty"`
 	Timestamp   time.Time `json:"timestamp"`
 }
 
-// Station holds one workbench's live state + its SSE subscribers.
-type Station struct {
-	Config StationConfig
-
-	mu           sync.Mutex
-	state        StationState
-	currentCode  string
-	currentImage string
-	currentDesc  string
-	startedAt    time.Time
-	timer        *time.Timer
-
-	// SSE subscribers
-	subMu       sync.Mutex
-	subscribers map[chan Event]bool
+func idleEvent() Event {
+	return Event{Type: "state", State: "idle", Timestamp: time.Now()}
 }
 
-func NewStation(sc StationConfig) *Station {
-	return &Station{
-		Config:      sc,
-		state:       StateIdle,
+// ---------- display (one monitor; a view sink with its own SSE subscribers) ----------
+
+type Display struct {
+	Config DisplayConfig
+
+	subMu       sync.Mutex
+	subscribers map[chan Event]bool
+
+	curMu   sync.Mutex
+	current Event // replayed to a browser that connects mid-stream
+}
+
+func NewDisplay(dc DisplayConfig) *Display {
+	return &Display{
+		Config:      dc,
 		subscribers: make(map[chan Event]bool),
+		current:     idleEvent(),
 	}
 }
 
-// Subscribe returns a channel that receives events for this station.
-func (s *Station) Subscribe() chan Event {
+func (d *Display) Subscribe() chan Event {
 	ch := make(chan Event, 8)
-	s.subMu.Lock()
-	s.subscribers[ch] = true
-	s.subMu.Unlock()
+	d.subMu.Lock()
+	d.subscribers[ch] = true
+	d.subMu.Unlock()
 
-	// Send current state immediately so a fresh subscriber renders correctly.
-	s.mu.Lock()
-	ev := s.buildStateEvent()
-	s.mu.Unlock()
-	ch <- ev
-
+	d.curMu.Lock()
+	ev := d.current
+	d.curMu.Unlock()
+	ch <- ev // render correctly the instant the browser connects
 	return ch
 }
 
-func (s *Station) Unsubscribe(ch chan Event) {
-	s.subMu.Lock()
-	if _, ok := s.subscribers[ch]; ok {
-		delete(s.subscribers, ch)
+func (d *Display) Unsubscribe(ch chan Event) {
+	d.subMu.Lock()
+	if _, ok := d.subscribers[ch]; ok {
+		delete(d.subscribers, ch)
 		close(ch)
 	}
-	s.subMu.Unlock()
+	d.subMu.Unlock()
 }
 
-func (s *Station) broadcast(ev Event) {
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
-	for ch := range s.subscribers {
+func (d *Display) broadcast(ev Event) {
+	d.subMu.Lock()
+	defer d.subMu.Unlock()
+	for ch := range d.subscribers {
 		select {
 		case ch <- ev:
-		default:
-			// slow subscriber, drop event rather than block
+		default: // slow subscriber: drop rather than block the line
 		}
 	}
 }
 
-// buildStateEvent is called with s.mu held.
-func (s *Station) buildStateEvent() Event {
-	return Event{
-		Type:        "state",
-		State:       string(s.state),
-		PartCode:    s.currentCode,
-		Image:       s.currentImage,
-		Description: s.currentDesc,
-		Timestamp:   time.Now(),
+// Push updates the persistent state (replayed to new subscribers) and broadcasts.
+func (d *Display) Push(ev Event) {
+	d.curMu.Lock()
+	d.current = ev
+	d.curMu.Unlock()
+	d.broadcast(ev)
+}
+
+// Flash broadcasts a transient event (e.g. an error) without changing state.
+func (d *Display) Flash(ev Event) { d.broadcast(ev) }
+
+func (d *Display) Current() Event {
+	d.curMu.Lock()
+	defer d.curMu.Unlock()
+	return d.current
+}
+
+// ---------- the line (scan-advanced shift register) ----------
+
+// slot is the product currently at one position in the line.
+type slot struct {
+	code  string
+	name  string
+	steps []Step
+}
+
+// Line is a shift register of length len(displayList). Each scan pushes a new
+// product onto position 0 and shifts the rest forward; the product off the end
+// is complete. Position i renders the product's step (i+1).
+type Line struct {
+	mu    sync.Mutex
+	slots []*slot
+}
+
+var line Line
+
+func (l *Line) init(n int) {
+	l.slots = make([]*slot, n)
+}
+
+// Advance pushes a scanned product onto the line.
+func (l *Line) Advance(code, name string, steps []Step) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := len(l.slots)
+	if n == 0 {
+		return
+	}
+	for i := n - 1; i >= 1; i-- {
+		l.slots[i] = l.slots[i-1]
+	}
+	l.slots[0] = &slot{code: code, name: name, steps: steps}
+	l.renderLocked()
+}
+
+// Reset clears the whole line (e.g. at shift start).
+func (l *Line) Reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.slots {
+		l.slots[i] = nil
+	}
+	l.renderLocked()
+}
+
+// renderLocked pushes each position's current step to its monitor.
+func (l *Line) renderLocked() {
+	now := time.Now()
+	for i, d := range displayList {
+		s := l.slots[i]
+		if s == nil || i >= len(s.steps) {
+			// empty, or this product has fewer steps than this position (done)
+			ev := idleEvent()
+			ev.Timestamp = now
+			d.Push(ev)
+			continue
+		}
+		st := s.steps[i]
+		d.Push(Event{
+			Type: "state", State: "display",
+			PartCode: s.code, PartName: s.name,
+			Image: st.Image, Description: st.Description,
+			StepIndex: i + 1, TotalSteps: len(s.steps),
+			Timestamp: now,
+		})
 	}
 }
 
-// Snapshot for supervisor view.
-type StationSnapshot struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
+// PosSnapshot is the supervisor's view of one position in the line.
+type PosSnapshot struct {
+	Position    int    `json:"position"`
+	DisplayID   string `json:"display_id"`
+	DisplayName string `json:"display_name"`
 	State       string `json:"state"`
 	PartCode    string `json:"part_code,omitempty"`
+	PartName    string `json:"part_name,omitempty"`
 	Description string `json:"description,omitempty"`
-	SecondsIn   int    `json:"seconds_in_state"`
+	StepIndex   int    `json:"step_index,omitempty"`
+	TotalSteps  int    `json:"total_steps,omitempty"`
 }
 
-func (s *Station) Snapshot() StationSnapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	secs := 0
-	if !s.startedAt.IsZero() {
-		secs = int(time.Since(s.startedAt).Seconds())
+func (l *Line) Snapshot() []PosSnapshot {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]PosSnapshot, len(displayList))
+	for i, d := range displayList {
+		ps := PosSnapshot{Position: i + 1, DisplayID: d.Config.ID, DisplayName: d.Config.Name, State: "idle"}
+		if s := l.slots[i]; s != nil && i < len(s.steps) {
+			st := s.steps[i]
+			ps.State = "display"
+			ps.PartCode = s.code
+			ps.PartName = s.name
+			ps.Description = st.Description
+			ps.StepIndex = i + 1
+			ps.TotalSteps = len(s.steps)
+		}
+		out[i] = ps
 	}
-	return StationSnapshot{
-		ID:          s.Config.ID,
-		Name:        s.Config.Name,
-		State:       string(s.state),
-		PartCode:    s.currentCode,
-		Description: s.currentDesc,
-		SecondsIn:   secs,
-	}
-}
-
-// HandleScan applies the state machine for a scan at this station.
-// Behaviour: the scanned part's spec is shown and STAYS on screen until the
-// next scan. Re-scanning the same code re-shows the same spec (never skipped);
-// a different code replaces it. There is no auto-complete, and with
-// idle_timeout_seconds <= 0 there is no auto-return to idle either.
-// Returns the outcome for logging.
-func (s *Station) HandleScan(partCode, image, description string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	prevState := s.state
-	prevCode := s.currentCode
-
-	s.state = StateDisplay
-	s.currentCode = partCode
-	s.currentImage = image
-	s.currentDesc = description
-	s.startedAt = time.Now()
-	s.armIdleTimerLocked() // no-op when idle_timeout_seconds <= 0
-	go s.broadcast(s.buildStateEvent())
-
-	switch {
-	case prevState != StateDisplay:
-		return "STARTED"
-	case prevCode == partCode:
-		return "RESCANNED"
-	default:
-		return "REPLACED"
-	}
-}
-
-// HandleError broadcasts an error event without changing state.
-func (s *Station) HandleError(message, partCode string) {
-	go s.broadcast(Event{
-		Type:      "error",
-		Message:   message,
-		PartCode:  partCode,
-		Timestamp: time.Now(),
-	})
-}
-
-func (s *Station) armIdleTimerLocked() {
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
-	}
-	if cfg.IdleTimeoutSeconds <= 0 {
-		return // persistent display: the spec stays until the next scan
-	}
-	s.timer = time.AfterFunc(time.Duration(cfg.IdleTimeoutSeconds)*time.Second, func() {
-		s.goIdle()
-	})
-}
-
-func (s *Station) cancelTimerLocked() {
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
-	}
-}
-
-func (s *Station) goIdle() {
-	s.mu.Lock()
-	s.state = StateIdle
-	s.currentCode = ""
-	s.currentImage = ""
-	s.currentDesc = ""
-	s.startedAt = time.Time{}
-	s.cancelTimerLocked()
-	ev := s.buildStateEvent()
-	s.mu.Unlock()
-	s.broadcast(ev)
+	return out
 }
 
 // ---------- globals ----------
@@ -237,7 +239,8 @@ func (s *Station) goIdle() {
 var (
 	cfg         Config
 	codeRegex   *regexp.Regexp
-	stations    = make(map[string]*Station)
+	displays    = make(map[string]*Display)
+	displayList []*Display
 	logMu       sync.Mutex
 	logFilePath string
 )
@@ -254,10 +257,16 @@ func main() {
 	}
 	codeRegex = re
 
-	for _, sc := range cfg.Stations {
-		stations[sc.ID] = NewStation(sc)
-		log.Printf("station registered: %s (%s)", sc.ID, sc.Name)
+	if len(cfg.Displays) < 1 {
+		log.Fatalf("config error: at least one display is required")
 	}
+	for _, dc := range cfg.Displays {
+		d := NewDisplay(dc)
+		displays[dc.ID] = d
+		displayList = append(displayList, d)
+		log.Printf("display registered: %s (%s)", dc.ID, dc.Name)
+	}
+	line.init(len(displayList))
 
 	if err := os.MkdirAll("logs", 0755); err != nil {
 		log.Fatalf("logs dir: %v", err)
@@ -267,19 +276,21 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleRoot)
-	mux.HandleFunc("/station/", handleStationPage)
+	mux.HandleFunc("/display/", handleDisplayPage)
+	mux.HandleFunc("/station/", handleDisplayPage) // backward-compatible alias
 	mux.HandleFunc("/events/", handleSSE)
 	mux.HandleFunc("/simulator", handleSimulatorPage)
 	mux.HandleFunc("/supervisor", handleSupervisorPage)
 	mux.HandleFunc("/api/scan", handleAPIScan)
+	mux.HandleFunc("/api/reset", handleAPIReset)
 	mux.HandleFunc("/api/config", handleAPIConfig)
 	mux.HandleFunc("/api/snapshots", handleAPISnapshots)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
 
 	addr := fmt.Sprintf(":%d", cfg.ServerPort)
-	log.Printf("Workbench Display Controller listening on http://localhost%s", addr)
-	log.Printf("Stations: %d | Parts: %d | Log: %s", len(stations), len(cfg.Parts), logFilePath)
+	log.Printf("Workbench Line Display (pipeline) listening on http://localhost%s", addr)
+	log.Printf("Monitors: %d | Parts: %d | Log: %s", len(displayList), len(cfg.Parts), logFilePath)
 	log.Printf("Open http://localhost%s/simulator to test", addr)
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
@@ -298,25 +309,14 @@ func loadConfig(path string) error {
 	if cfg.ServerPort == 0 {
 		cfg.ServerPort = 8080
 	}
-	// idle_timeout_seconds is intentionally NOT defaulted: 0 (or omitted) means
-	// "persistent display" — the spec stays on screen until the next scan.
-	if cfg.CompletionMinGapMs == 0 {
-		cfg.CompletionMinGapMs = 3000
-	}
-	if cfg.CompletionFlashMs == 0 {
-		cfg.CompletionFlashMs = 1800
-	}
 	if cfg.CodePattern == "" {
-		cfg.CodePattern = `SB\d{3}[A-Z]{3}`
+		cfg.CodePattern = `P(\d{5})`
 	}
 	return nil
 }
 
 // ---------- HTTP handlers ----------
 
-// serveNoCache serves an HTML page with revalidation forced, so an updated
-// page (or a behaviour change like this one) always takes effect on the kiosk
-// instead of a stale cached copy being shown.
 func serveNoCache(w http.ResponseWriter, r *http.Request, path string) {
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	http.ServeFile(w, r, path)
@@ -327,18 +327,16 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Landing page: list stations + links
 	serveNoCache(w, r, filepath.Join("static", "index.html"))
 }
 
-func handleStationPage(w http.ResponseWriter, r *http.Request) {
-	// URL: /station/{id}
-	id := strings.TrimPrefix(r.URL.Path, "/station/")
-	if _, ok := stations[id]; !ok {
-		http.Error(w, "unknown station", http.StatusNotFound)
+func handleDisplayPage(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+	if _, ok := displays[id]; !ok {
+		http.Error(w, "unknown display", http.StatusNotFound)
 		return
 	}
-	serveNoCache(w, r, filepath.Join("static", "station.html"))
+	serveNoCache(w, r, filepath.Join("static", "display.html"))
 }
 
 func handleSimulatorPage(w http.ResponseWriter, r *http.Request) {
@@ -350,36 +348,32 @@ func handleSupervisorPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIConfig(w http.ResponseWriter, r *http.Request) {
-	out := struct {
-		IdleTimeoutSeconds int             `json:"idle_timeout_seconds"`
-		CompletionFlashMs  int             `json:"completion_flash_ms"`
-		Stations           []StationConfig `json:"stations"`
-	}{
-		IdleTimeoutSeconds: cfg.IdleTimeoutSeconds,
-		CompletionFlashMs:  cfg.CompletionFlashMs,
-		Stations:           cfg.Stations,
+	type partOut struct {
+		Code  string `json:"code"`
+		Name  string `json:"name"`
+		Steps int    `json:"steps"`
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	parts := make([]partOut, 0, len(cfg.Parts))
+	for code, p := range cfg.Parts {
+		parts = append(parts, partOut{Code: code, Name: p.Name, Steps: len(p.Steps)})
+	}
+	writeJSON(w, struct {
+		Displays []DisplayConfig `json:"displays"`
+		Parts    []partOut       `json:"parts"`
+	}{Displays: cfg.Displays, Parts: parts})
 }
 
 func handleAPISnapshots(w http.ResponseWriter, r *http.Request) {
-	snaps := make([]StationSnapshot, 0, len(cfg.Stations))
-	for _, sc := range cfg.Stations {
-		if st, ok := stations[sc.ID]; ok {
-			snaps = append(snaps, st.Snapshot())
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(snaps)
+	writeJSON(w, struct {
+		Positions []PosSnapshot `json:"positions"`
+	}{Positions: line.Snapshot()})
 }
 
 func handleSSE(w http.ResponseWriter, r *http.Request) {
-	// URL: /events/{stationID}
 	id := strings.TrimPrefix(r.URL.Path, "/events/")
-	station, ok := stations[id]
+	d, ok := displays[id]
 	if !ok {
-		http.Error(w, "unknown station", http.StatusNotFound)
+		http.Error(w, "unknown display", http.StatusNotFound)
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -387,13 +381,12 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch := station.Subscribe()
-	defer station.Unsubscribe(ch)
+	ch := d.Subscribe()
+	defer d.Unsubscribe(ch)
 
 	keepAlive := time.NewTicker(20 * time.Second)
 	defer keepAlive.Stop()
@@ -419,6 +412,15 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// entryError flashes an error on the entry monitor (position 1), where the
+// operator doing the scanning can see it. It does not advance the line.
+func entryError(message, partCode string) {
+	if len(displayList) == 0 {
+		return
+	}
+	displayList[0].Flash(Event{Type: "error", Message: message, PartCode: partCode, Timestamp: time.Now()})
+}
+
 func handleAPIScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -426,57 +428,59 @@ func handleAPIScan(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Raw       string `json:"raw"`
-		StationID string `json:"station_id"`
+		StationID string `json:"station_id"` // accepted but ignored (one scanner feeds the line)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
 
-	// If station_id is missing, try to infer from a prefix in raw (real scanner path)
-	stationID := req.StationID
-	raw := req.Raw
-	if stationID == "" {
-		stationID, raw = inferStationFromPrefix(raw)
-	}
-	station, ok := stations[stationID]
-	if !ok {
-		http.Error(w, "unknown or missing station_id", http.StatusBadRequest)
-		return
-	}
-
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		station.HandleError("empty scan", "")
-		logScan(stationID, raw, "", "ERROR", "empty scan")
+	raw := strings.TrimSpace(req.Raw)
+	if raw == "" {
+		entryError("empty scan", "")
+		logScan(raw, "", "ERROR", "empty scan")
 		writeJSON(w, map[string]any{"ok": false, "error": "empty scan"})
 		return
 	}
-	match := extractCode(trimmed)
-	if match == "" {
-		station.HandleError("no part code found in scan", "")
-		logScan(stationID, raw, "", "ERROR", "no part code found in scan")
+	code := extractCode(raw)
+	if code == "" {
+		entryError("no part code found in scan", "")
+		logScan(raw, "", "ERROR", "no part code found in scan")
 		writeJSON(w, map[string]any{"ok": false, "error": "no part code found"})
 		return
 	}
-	spec, found := cfg.Parts[match]
+	spec, found := cfg.Parts[code]
 	if !found {
-		station.HandleError(fmt.Sprintf("unknown part code: %s", match), match)
-		logScan(stationID, raw, match, "ERROR", "unknown part code")
-		writeJSON(w, map[string]any{"ok": false, "part_code": match, "error": "unknown part"})
+		entryError(fmt.Sprintf("unknown part code: %s", code), code)
+		logScan(raw, code, "ERROR", "unknown part code")
+		writeJSON(w, map[string]any{"ok": false, "part_code": code, "error": "unknown part"})
+		return
+	}
+	if len(spec.Steps) == 0 {
+		entryError(fmt.Sprintf("part %s has no steps configured", code), code)
+		logScan(raw, code, "ERROR", "no steps configured")
+		writeJSON(w, map[string]any{"ok": false, "part_code": code, "error": "no steps configured"})
 		return
 	}
 
-	outcome := station.HandleScan(match, spec.Image, spec.Description)
-	logScan(stationID, raw, match, outcome, "")
-	writeJSON(w, map[string]any{"ok": true, "part_code": match, "outcome": outcome})
+	line.Advance(code, spec.Name, spec.Steps)
+	logScan(raw, code, "ADVANCED", "")
+	writeJSON(w, map[string]any{"ok": true, "part_code": code, "outcome": "ADVANCED", "total_steps": len(spec.Steps)})
 }
 
-// extractCode applies codeRegex to the raw scan and returns the part code.
-// If code_pattern has a capture group, group 1 is returned (so a structured
-// ISO 15434 / H-KMC label can be parsed down to just the part number in the
-// "P" field). Otherwise the whole match is returned, so simple patterns still
-// work unchanged.
+func handleAPIReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	line.Reset()
+	logScan("", "", "RESET", "")
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// extractCode applies codeRegex to the raw scan. With a capture group, group 1
+// is returned (so a structured ISO 15434 / H-KMC label is parsed down to the
+// part number in the "P" field); otherwise the whole match.
 func extractCode(s string) string {
 	m := codeRegex.FindStringSubmatch(s)
 	if m == nil {
@@ -486,27 +490,6 @@ func extractCode(s string) string {
 		return m[1]
 	}
 	return m[0]
-}
-
-// inferStationFromPrefix looks for a leading "N|" or "SN|" style prefix
-// (configured on the physical scanner). Returns stationID and stripped raw.
-func inferStationFromPrefix(raw string) (string, string) {
-	trimmed := strings.TrimLeft(raw, " \t")
-	if len(trimmed) < 2 {
-		return "", raw
-	}
-	// Look for pattern "<prefix>|" at start
-	idx := strings.Index(trimmed, "|")
-	if idx <= 0 || idx > 4 {
-		return "", raw
-	}
-	prefix := trimmed[:idx]
-	for _, sc := range cfg.Stations {
-		if sc.Prefix == prefix {
-			return sc.ID, trimmed[idx+1:]
-		}
-	}
-	return "", raw
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -526,11 +509,11 @@ func ensureLogHeader() {
 			return
 		}
 		defer f.Close()
-		f.WriteString("timestamp,station,raw_scan,part_code,outcome,error\n")
+		f.WriteString("timestamp,raw_scan,part_code,outcome,error\n")
 	}
 }
 
-func logScan(stationID, raw, partCode, outcome, errMsg string) {
+func logScan(raw, partCode, outcome, errMsg string) {
 	logMu.Lock()
 	defer logMu.Unlock()
 
@@ -541,13 +524,5 @@ func logScan(stationID, raw, partCode, outcome, errMsg string) {
 	}
 	defer f.Close()
 	rawEsc := strings.ReplaceAll(raw, "\"", "\"\"")
-	line := fmt.Sprintf("%s,%s,\"%s\",%s,%s,%s\n",
-		time.Now().Format(time.RFC3339),
-		stationID,
-		rawEsc,
-		partCode,
-		outcome,
-		errMsg,
-	)
-	f.WriteString(line)
+	fmt.Fprintf(f, "%s,\"%s\",%s,%s,%s\n", time.Now().Format(time.RFC3339), rawEsc, partCode, outcome, errMsg)
 }

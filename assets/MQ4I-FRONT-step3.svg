@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1400" font-family="Segoe UI, Arial, sans-serif">
+  <rect width="1000" height="1400" fill="#ffffff"/>
+  <rect x="16" y="16" width="968" height="120" fill="#534AB7"/>
+  <text x="500" y="74" fill="#ffffff" font-size="42" font-weight="700" text-anchor="middle">MQ4I Front Door Trim</text>
+  <text x="500" y="112" fill="#f0f0f0" font-size="26" text-anchor="middle">Work standard — step panel</text>
+  <circle cx="500" cy="440" r="150" fill="none" stroke="#534AB7" stroke-width="10"/>
+  <text x="500" y="420" fill="#534AB7" font-size="130" font-weight="800" text-anchor="middle">3</text>
+  <text x="500" y="500" fill="#666666" font-size="40" text-anchor="middle">of 3</text>
+  <text x="500" y="700" fill="#1b1b1b" font-size="40" font-weight="600" text-anchor="middle">STEP 3</text>
+  <text x="500" y="770" fill="#333333" font-size="32" text-anchor="middle">Map pocket + mood lamp screwing</text>
+  <rect x="150" y="890" width="700" height="360" rx="16" fill="none" stroke="#cccccc" stroke-width="2" stroke-dasharray="8 8"/>
+  <text x="500" y="1080" fill="#aaaaaa" font-size="30" text-anchor="middle">[ assembly diagram for this step ]</text>
+  <text x="500" y="1360" fill="#888888" font-size="22" text-anchor="middle">Seoyon E-Hwa Summit Automotive — placeholder panel</text>
+</svg>

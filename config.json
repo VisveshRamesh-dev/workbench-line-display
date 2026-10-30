@@ -1,20 +1,49 @@
 {
   "code_pattern": "P(\\d{5})",
-  "idle_timeout_seconds": 0,
-  "completion_min_gap_ms": 3000,
-  "completion_flash_ms": 1800,
   "server_port": 8080,
   "serial_port": "COM11",
   "serial_mode": "baud=9600 parity=N data=8 stop=1",
   "serial_mirror_port": "",
   "serial_debug": false,
-  "stations": [
-    { "id": "WB-01", "name": "Door Trim Assembly" }
+
+  "displays": [
+    { "id": "D1", "name": "Bench 1 — Step 1" },
+    { "id": "D2", "name": "Bench 2 — Step 2" },
+    { "id": "D3", "name": "Bench 3 — Step 3" }
   ],
+
   "parts": {
-    "82301": { "image": "assets/MQ4I-FRONT-DOOR-TRIM.png", "description": "82301GB000MQC · MQ4I Front Door Trim — FL (Front Left) · Process 07" },
-    "82302": { "image": "assets/MQ4I-FRONT-DOOR-TRIM.png", "description": "82302GB000MQC · MQ4I Front Door Trim — FR (Front Right) · Process 07" },
-    "83301": { "image": "assets/MQ4I-REAR-DOOR-TRIM.png", "description": "83301GB000MQC · MQ4I Rear Door Trim — RL (Rear Left) · Process 07" },
-    "83302": { "image": "assets/MQ4I-REAR-DOOR-TRIM.png", "description": "83302GB000MQC · MQ4I Rear Door Trim — RR (Rear Right) · Process 07" }
+    "82301": {
+      "name": "82301GB000MQC · MQ4I Front Door Trim (FL)",
+      "steps": [
+        { "image": "assets/MQ4I-FRONT-step1.svg", "description": "Mount the bracket and seat all clips" },
+        { "image": "assets/MQ4I-FRONT-step2.svg", "description": "Fit inside handle, screw to garnish (x3)" },
+        { "image": "assets/MQ4I-FRONT-step3.svg", "description": "Map pocket + mood lamp screwing" }
+      ]
+    },
+    "82302": {
+      "name": "82302GB000MQC · MQ4I Front Door Trim (FR)",
+      "steps": [
+        { "image": "assets/MQ4I-FRONT-step1.svg", "description": "Mount the bracket and seat all clips" },
+        { "image": "assets/MQ4I-FRONT-step2.svg", "description": "Fit inside handle, screw to garnish (x3)" },
+        { "image": "assets/MQ4I-FRONT-step3.svg", "description": "Map pocket + mood lamp screwing" }
+      ]
+    },
+    "83301": {
+      "name": "83301GB000MQC · MQ4I Rear Door Trim (RL)",
+      "steps": [
+        { "image": "assets/MQ4I-REAR-step1.svg", "description": "Pick part, place on jig, scan main barcode" },
+        { "image": "assets/MQ4I-REAR-step2.svg", "description": "Map pocket screwing (1 No.)" },
+        { "image": "assets/MQ4I-REAR-step3.svg", "description": "PAD-DR anti-rattle No.2 (x2), move on" }
+      ]
+    },
+    "83302": {
+      "name": "83302GB000MQC · MQ4I Rear Door Trim (RR)",
+      "steps": [
+        { "image": "assets/MQ4I-REAR-step1.svg", "description": "Pick part, place on jig, scan main barcode" },
+        { "image": "assets/MQ4I-REAR-step2.svg", "description": "Map pocket screwing (1 No.)" },
+        { "image": "assets/MQ4I-REAR-step3.svg", "description": "PAD-DR anti-rattle No.2 (x2), move on" }
+      ]
+    }
   }
 }

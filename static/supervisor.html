@@ -8,69 +8,80 @@
 <body class="page-super">
   <div class="super-wrap">
     <header class="super-header">
-      <h1>Door Garnish Line — Live Status</h1>
+      <h1>Assembly Line — Live Pipeline</h1>
       <div class="super-time" id="clock">--:--:--</div>
     </header>
-    <div class="super-grid" id="stationsGrid"></div>
+
+    <div class="line-banner idle" id="lineBanner">
+      <span class="line-state" id="lineState">LINE EMPTY</span>
+      <span class="line-count" id="lineCount"></span>
+      <button id="resetBtn" class="reset-btn">Reset line</button>
+    </div>
+
+    <div class="super-grid" id="posGrid"></div>
   </div>
 
   <script>
-    let stations = [];
+    let positions = [];
 
     async function init() {
-      const res = await fetch('/api/config');
-      const cfg = await res.json();
-      stations = cfg.stations;
+      const cfg = await (await fetch('/api/config')).json();
+      positions = cfg.displays || [];
       renderCards();
-      tick();
-      setInterval(tick, 1000);
-      setInterval(refresh, 800);
+      tick(); setInterval(tick, 1000);
+      refresh(); setInterval(refresh, 700);
+      document.getElementById('resetBtn').addEventListener('click', async () => {
+        await fetch('/api/reset', { method: 'POST' }); refresh();
+      });
     }
 
     function renderCards() {
-      const grid = document.getElementById('stationsGrid');
+      const grid = document.getElementById('posGrid');
       grid.innerHTML = '';
-      stations.forEach(st => {
+      positions.forEach((d, i) => {
         const card = document.createElement('div');
         card.className = 'super-card idle';
-        card.id = 'card-' + st.id;
+        card.id = 'card-' + d.id;
         card.innerHTML = `
           <div class="super-card-header">
-            <span class="super-station-id">${st.id}</span>
+            <span class="super-station-id">POS ${i + 1} · ${d.id}</span>
             <span class="super-state-badge" data-role="state">IDLE</span>
           </div>
-          <h3>${st.name}</h3>
+          <h3>${d.name}</h3>
           <div class="super-part" data-role="part">—</div>
-          <div class="super-desc" data-role="desc">Awaiting scan</div>
-          <div class="super-timer" data-role="timer">0s</div>
-        `;
+          <div class="super-desc" data-role="desc">Waiting for product</div>
+          <div class="super-step" data-role="step"></div>`;
         grid.appendChild(card);
       });
     }
 
     async function refresh() {
       try {
-        const res = await fetch('/api/snapshots');
-        const snaps = await res.json();
-        snaps.forEach(snap => {
-          const card = document.getElementById('card-' + snap.id);
+        const snap = await (await fetch('/api/snapshots')).json();
+        const pos = snap.positions || [];
+        const occupied = pos.filter(p => p.state === 'display').length;
+        const banner = document.getElementById('lineBanner');
+        banner.className = 'line-banner ' + (occupied ? 'running' : 'idle');
+        document.getElementById('lineState').textContent = occupied ? 'PRODUCTS ON LINE' : 'LINE EMPTY';
+        document.getElementById('lineCount').textContent = occupied ? `${occupied} / ${pos.length} benches active` : '';
+        pos.forEach(p => {
+          const card = document.getElementById('card-' + p.display_id);
           if (!card) return;
-          card.className = 'super-card ' + snap.state;
-          card.querySelector('[data-role=state]').textContent = snap.state.toUpperCase();
-          card.querySelector('[data-role=part]').textContent = snap.part_code || '—';
+          card.className = 'super-card ' + p.state;
+          card.querySelector('[data-role=state]').textContent = (p.state || 'idle').toUpperCase();
+          card.querySelector('[data-role=part]').textContent = p.part_code || '—';
           card.querySelector('[data-role=desc]').textContent =
-            snap.description || (snap.state === 'idle' ? 'Awaiting scan' : '');
-          card.querySelector('[data-role=timer]').textContent =
-            snap.state === 'idle' ? '' : (snap.seconds_in_state + 's');
+            p.description || (p.state === 'idle' ? 'Waiting for product' : '');
+          card.querySelector('[data-role=step]').textContent =
+            (p.state === 'display' && p.step_index) ? `Step ${p.step_index}/${p.total_steps}` : '';
         });
-      } catch (e) { /* ignore transient errors */ }
+      } catch (e) {}
     }
 
     function tick() {
       const now = new Date();
       const s = n => String(n).padStart(2, '0');
-      document.getElementById('clock').textContent =
-        `${s(now.getHours())}:${s(now.getMinutes())}:${s(now.getSeconds())}`;
+      document.getElementById('clock').textContent = `${s(now.getHours())}:${s(now.getMinutes())}:${s(now.getSeconds())}`;
     }
 
     init();
