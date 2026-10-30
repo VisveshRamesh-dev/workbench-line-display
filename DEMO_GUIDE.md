@@ -52,19 +52,12 @@ You need two files in the program folder that are **not** in the download becaus
 
 **You have two ways to get them:**
 
-**Option A — Ask Visvesh for the ready-made `.exe` files.** Easiest. Just drop both `.exe` files into the program folder next to `config.json`. Done.
+**Option A — Ask Visvesh for the ready-made `.exe` files.** Easiest. Just drop the `.exe` files into the program folder next to `config.json`. Done.
 
-**Option B — Build them yourself (needs Go installed).** Open a terminal in the program folder and run:
+**Option B — Build them yourself (needs Go installed, free from https://go.dev/dl/).**
+Just **double-click `build.bat`**. It builds all the `.exe` files for you and tells you when it's done. (The first time, it needs internet to download some code.) You only do this once, or again if the code changes.
 
-```bash
-go build -o workbench-line-display.exe .
-```
-
-```bash
-go build -o serial-capture.exe ./serial-capture
-```
-
-That's it — those two commands create the two `.exe` files. You only do this once (or again if the code changes).
+> If you prefer the manual way, open a terminal in the program folder and run `go build -o workbench-line-display.exe .` then `go build -o serial-capture.exe ./serial-capture`.
 
 ---
 
@@ -269,4 +262,4 @@ Scan any of them in a row to watch the line fill up and slide forward.
 
 ## 11. One-line summary to hand over
 
-> Put the `.exe` files in the folder, plug in the monitors, run **`start.bat`**, and scan. To change the number of screens or the parts/steps, edit **`config.json`**. To rehearse without a scanner, open **`http://localhost:8080/simulator`**.
+> First time only: double-click **`build.bat`** (or get the `.exe` files from Visvesh). Then plug in the monitors, run **`start.bat`**, and scan. To change the number of screens or the parts/steps, edit **`config.json`**. To rehearse without a scanner, open **`http://localhost:8080/simulator`**.

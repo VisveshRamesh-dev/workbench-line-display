@@ -1,5 +1,6 @@
-# Compiled binaries (rebuild with `go build`)
+# Compiled binaries (rebuild with `go build` or build.bat)
 *.exe
+*.exe~
 
 # Chrome kiosk profiles (created at runtime by start.bat)
 chrome-profile-*/
